@@ -1,0 +1,92 @@
+clc;close all;clear all;
+load 'Data/ArrayData'
+load 'Data/CleanTrials'
+%% calculate PSD
+numOfChan = 48;
+cleanNumber = 490;
+psd = zeros(numOfChan, 321, size(Intersect_Clean_Trials, 1));
+for i = 1 : numOfChan
+    mat = chan(i).lfp;
+    cnt = 0;
+    for j = 1:490
+        cnt = cnt+1;
+        [psd(i, :, cnt), freq] = PSD(mat(1:end-1, Intersect_Clean_Trials(j))', 200);
+    end
+end
+%% Delete frequencies higher than 55 Hz
+psd = psd(:, 2:176, :);
+freq = freq(2:176);
+%% Delete pink noise
+newPSD = zeros(numOfChan, 175, cleanNumber);
+for i = 1 : numOfChan
+    for j = 1 : cleanNumber
+        newPSD(i, :, j) = deletePinkNoise(psd(i, :, j), freq);
+    end
+end
+%% spectrogram(Time-Frequency)
+for i = 1 : numOfChan
+    mat = chan(i).lfp;
+    SPECT = zeros(129, 63);
+    i
+    r = randperm(490, 200);
+    for j = 1:200%490
+        y = bandpass(mat(1:end-1, Intersect_Clean_Trials(r(j))),[10 45], 200);
+        [spectP,spectF,spectT] = spectrogram(y,20,[],[],200);
+        SPECT = SPECT+spectP/490;
+    end
+    figure
+    image(spectT-1.2, spectF(1:59), abs(SPECT(1:59, :)).^2, 'CDataMapping','scaled')
+    colormap(jet(256))
+    c = colorbar;
+    c.Label.String = 'Power';
+    xlabel("Time(sec)", 'interpreter', 'latex')
+ylabel("Frequency(Hz)", 'interpreter', 'latex')
+title(sprintf("Average Power Spectrogram for channel %d", i), 'interpreter', 'latex')
+saveas(gcf,sprintf("SpectChan%d", i),'png')
+end
+%% calculate average PSD for each channel
+AVGPSD = zeros(numOfChan, 175);
+for i = 1 : numOfChan
+     AVGPSD(i, :) = mean(newPSD(i, :, :), 3);
+end
+%% plot
+figure
+for i = 1 : numOfChan
+    subplot(6, 8, i)
+    plot(freq, AVGPSD(i, :))
+    title(sprintf("Average PSD Channel %d", i))
+    ylabel("Power")
+    xlabel("Frequency(Hz)")
+end
+%% find dominant frequency of each channel
+[~, I] = max(AVGPSD');
+I = I*200/640;
+save('dominant.mat','I');
+%% Clustering electrode group based on their dominant oscillation frequency
+cluster = NaN(5, 10);
+for i = 1 : numOfChan
+    [row,col] = find(ChannelPosition==i);
+    cluster(row,col) = I(i);
+end
+figure
+image([1 10],[1 5], cluster,'CDataMapping','scaled')
+c = colorbar;
+c.Label.String = 'Dominant frequency(Hz)';
+xlabel("X", 'interpreter', 'latex')
+ylabel("Y", 'interpreter', 'latex')
+title("Clustered electrode group based on their dominant oscillation", 'interpreter', 'latex')
+%% Functions
+function [psdx, freq] = PSD(x, fs)
+N = length(x);
+xdft = fft(x);
+xdft = xdft(1:N/2+1);
+psdx = (1/(fs*N)) * abs(xdft).^2;
+psdx(2:end-1) = 2*psdx(2:end-1);
+freq = 0:fs/length(x):fs/2;
+end
+function newX = deletePinkNoise(x, freq)
+X = [ones(length(log2(freq)),1) log2(freq)'];
+Y = log2(x)';
+b = X\Y;
+newX = Y - log2(freq)'*b(2) - b(1)*ones(length(log2(freq)),1);
+end
